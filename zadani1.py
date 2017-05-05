@@ -53,4 +53,4 @@ with open("sdf.txt") as file:
     
     
     
-# Zdenek Coko Benda 606  619 918 - 
+# Zdenek Coko Benda: +420 606 619 918
