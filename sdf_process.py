@@ -2,7 +2,6 @@ import argparse
 import csv
 import math
 import pprint
-import sys
 from collections import Counter
 import time
 
@@ -18,7 +17,7 @@ if args.verbose:
     print('Chatty output turned on.')
 
 
-def OpenReadFile(filename):
+def open_read_file(filename):
 
     atom_counts = list()
     bond_counts = list()
@@ -66,26 +65,25 @@ def OpenReadFile(filename):
                 if '$$$$' in line:
                     break
 
-    A = {}
-    A['atom_counts'] = atom_counts
-    A['bond_counts'] = bond_counts
-    A['atoms_all'] = atoms_all
-    A['coordinates'] = coordinates_all
-    A['bond_data'] = bond_data
+    allinone = dict()
+    allinone['atom_counts'] = atom_counts
+    allinone['bond_counts'] = bond_counts
+    allinone['atoms_all'] = atoms_all
+    allinone['coordinates'] = coordinates_all
+    allinone['bond_data'] = bond_data
     
-    return A
+    return allinone
 
 
-def MaxDistance(coordinates):
-    n = 1
-    for molecule in coordinates:
+def max_distance(coordinates):
+    for n, molecule in enumerate(coordinates, start=1):
         maxdist = 0
         atom1 = 1
         atom2 = 1
         
         for i in range(len(molecule)):
             for j in range(i+1, len(molecule)):
-                distance = math.sqrt(sum( (molecule[i][k] - molecule[j][k])**2 for k in range(3) ))
+                distance = math.sqrt(sum((molecule[i][k] - molecule[j][k])**2 for k in range(3)))
                 
                 if distance > maxdist:
                     maxdist = distance
@@ -94,29 +92,28 @@ def MaxDistance(coordinates):
                     
         if args.verbose:
             print('{}: Maxdist between atms {a1} {a2}; {dist:.4f}'.format(n, a1=atom1, a2=atom2, dist=maxdist))
-        n += 1
 
 
-def MaxBondCounters(bond_tuples, atom_counts, atoms_all):
-    glob_pairs = list()                                     # DIVIDE OR NOT TO DIVIDE - THAT IS THE QUESTION
+def maxbonds_counters(bond_tuples, atom_counts, atoms_all):
+    glob_pairs = list()
 
     for mol_bonds, count, atoms in zip(bond_tuples, atom_counts, atoms_all):
         maxbonds = [0] * count
         
         # values = tuple: (position of 1st atom, position of 2nd atom, bond type)
-        for values in mol_bonds:
-            if values[2] > maxbonds[values[0]-1]:   # if bonds > maxbonds[first_atom-1]
-                maxbonds[values[0]-1] = values[2]      # maxbonds[first-1] = bonds
-            if values[2] > maxbonds[values[1]-1]:
-                maxbonds[values[1]-1] = values[2]      # readability ?
+        for first_atom, second_atom, bond in mol_bonds:
+            if bond > maxbonds[first_atom-1]:   # if bonds > maxbonds[first_atom-1]
+                maxbonds[first_atom-1] = bond     # maxbonds[first-1] = bonds
+            if bond > maxbonds[second_atom-1]:
+                maxbonds[second_atom-1] = bond
 
         pairs_tuples = list(zip(atoms, maxbonds))
         glob_pairs.append(pairs_tuples)
 
     # COUNTERS
-    final_stat = Counter()
-    n = 1
-    for molecule_pairs in glob_pairs:
+    final_stat = Counter()   # mol_counter = Counter([])
+    # final_stat += mol_counter (to same u elem_Counter)
+    for n, molecule_pairs in enumerate(glob_pairs, start=1):
         mol_counter = Counter()
         
         for i in molecule_pairs:
@@ -126,23 +123,21 @@ def MaxBondCounters(bond_tuples, atom_counts, atoms_all):
         
         if args.verbose:
             print('{}: {}'.format(n, mol_counter))
-        n += 1
     
     print("\n### FINAL STATISTICS OF ATOM TYPES: ###")
-    PrintFinal = pprint.PrettyPrinter(indent=2)
-    PrintFinal.pprint(final_stat)
+    print_final = pprint.PrettyPrinter(indent=2)
+    print_final.pprint(final_stat)
 
 
-def MolecularMass(elements_lists):
+def molecular_mass(elements_lists):
     help_reader = {}
     with open('Periodic_Table_Of_Elements.csv') as csvfile:
         reader = csv.DictReader(csvfile, delimiter=',')
         
         for row in reader:  # help_reader is created in order to reduce opening of the csv file
             help_reader[row['Symbol']] = float(row['Atomic Weight'])
-        
-    n = 1
-    for molecule in elements_lists:
+
+    for n, molecule in enumerate(elements_lists, start=1):
         """
         example: molecule = ['N', 'O', 'O', 'O', 'H', 'H', 'H', 'H', 'H']
         Repetition of elements. The summarizing element_sum Counter() is created
@@ -155,20 +150,20 @@ def MolecularMass(elements_lists):
         molecular_mass = 0
             
         for element, count in element_sum.items():
-            for PT_element, atomic_weight in help_reader.items():
+            molecular_mass += help_reader[element] * count
+            """for PT_element, atomic_weight in help_reader.items():
                 if element == PT_element:
-                    molecular_mass += atomic_weight * count
+                    molecular_mass += atomic_weight * count"""
                     
         fin_molecular_mass = molecular_mass * 1.66053904e-27
                         
         if args.verbose:
             print('{}: Weight = {:.3e} kg'.format(n, fin_molecular_mass))
-        n += 1
             
-stack = OpenReadFile(args.filename)  # example.txt 'ChI_BI_project.sdf'
-MaxDistance(stack['coordinates'])
-MolecularMass(stack['atoms_all'])
-MaxBondCounters(stack['bond_data'], stack['atom_counts'], stack['atoms_all'])
+stack = open_read_file(args.filename)
+max_distance(stack['coordinates'])
+molecular_mass(stack['atoms_all'])
+maxbonds_counters(stack['bond_data'], stack['atom_counts'], stack['atoms_all'])
 
 print("\n--- %s seconds ---" % (time.time() - start_time))
 
