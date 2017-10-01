@@ -21,19 +21,16 @@ class Atom:
         self.element = element
 
     def __str__(self):
-        return 'Atom {}, coordinates {x:.2f}, {y}, {z}'.format(self.element, x=self.x, y=self.y, z=self.z)
+        return f'Atom {self.element}, coordinates {self.coords}'
 
 
 class Molecule:
-    def __init__(self, atom_count, bond_count, atoms, bonds):
-        self.atom_count = atom_count
-        self.bond_count = bond_count
+    def __init__(self, atoms, bonds):
         self.atoms = atoms
         self.bonds = bonds
 
     def __str__(self):
-        return 'Molecule: atom & bond count:{}, {}, \natms:{}, bnds:{}'.format(self.atom_count, self.bond_count,
-                                                                               self.atoms, self.bonds)
+        return f'Molecule: atoms:{self.atoms}, \nbonds:{self.bonds}'
 
     def maxdistance(self):
         maxdist = 0
@@ -50,30 +47,26 @@ class Molecule:
                     atom2 = n+1-m    # m subtraction because of start=m+1
 
         if args.verbose:
-            print('Maxdist between atms {a1} {a2}; {dist:.4f}'.format(a1=atom1, a2=atom2, dist=maxdist))
+            print(f'Maxdist between atms {atom1} {atom2}; {maxdist:.4f}')
 
     def molecular_mass(self):
-        element_sum = Counter()
 
-        for atom in self.atoms:
-            """
-            example: elements in a molecule = ['N', 'O', 'O', 'O', 'H', 'H', 'H', 'H', 'H']
-            Repetition of elements. The summarizing element_sum Counter() is created
-            in order to reduce looping over keys in relative_atomic_masses. 
-            """
-            element_sum[atom.element] += 1
+        element_sum = Counter(atom.element for atom in self.atoms)
+        """
+        example: elements in a molecule = ['N', 'O', 'O', 'O', 'H', 'H', 'H', 'H', 'H']
+        Repetition of elements. The summarizing element_sum Counter() is created
+        in order to reduce looping over keys in relative_atomic_masses. 
+        """
 
-        molecular_mass = 0
-
-        for element, count in element_sum.items():
-            molecular_mass += relative_atomic_masses[element] * count  # getting value through dictionary
-        fin_molecular_mass = molecular_mass * 1.66053904e-27
+        molecular_mass = sum(relative_atomic_masses[element]*count for element, count in element_sum.items())
+        # PEP8: line too long with ' * 1.66053904e-27' -> final_molecular_mass created
+        final_molecular_mass = molecular_mass * 1.66053904e-27
 
         if args.verbose:
-            print('Weight = {:.3e} kg'.format(fin_molecular_mass))
+            print(f'Weight = {final_molecular_mass:.3e} kg')
 
     def maxbonds_counters(self):
-        maxbonds = [0] * self.atom_count
+        maxbonds = [0] * len(self.atoms)
 
         for i in self.bonds:
             if i.bond > maxbonds[i.first_atom-1]:
@@ -85,20 +78,26 @@ class Molecule:
         # contains information about elements and their maximum bonds
         molecule_maxbonds = list(zip([atom.element for atom in self.atoms], maxbonds))
 
-        # COUNTERS
+        # COUNTERS - duty to do
         molecule_statistics = Counter()
+
         for i in molecule_maxbonds:
             molecule_statistics[i] += 1
 
-        for key in molecule_statistics:
-            final_statistics[key] += molecule_statistics[key]
+        global final_statistics
+        final_statistics += molecule_statistics
+        # without 'global': UnboundLocalError: local variable referenced before assignment
+        #  - interpreter doesn't identify it as glob var
+
+        """for key in molecule_statistics:
+            final_statistics[key] += molecule_statistics[key]"""
+        # python identifies final_statistics as global variable
 
         if args.verbose:
             print(molecule_statistics)
 
 
 def open_read_file(filename):
-    # Coordinates = namedtuple('Coordinates', ['x', 'y', 'z'])
     Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
     molecules = list()
 
@@ -109,11 +108,8 @@ def open_read_file(filename):
                     file.readline()
                 info = file.readline()
 
-                atom_count = int(info[0:3])
-                bond_count = int(info[3:6])
-
                 atoms = list()  # list of Atom objects included in a molecule
-                for i in range(atom_count):
+                for i in range(int(info[0:3])):
                     line = file.readline()
                     element = line[31:34].strip()
                     coordinates = tuple(float(line[l: r]) for l, r in [(3, 10), (13, 20), (23, 30)])
@@ -121,12 +117,12 @@ def open_read_file(filename):
                     atoms.append(atom)
 
                 bonds = list()  # stores information about atoms in a molecule and their valence
-                for i in range(bond_count):
+                for i in range(int(info[3:6])):
                     line = file.readline()
                     first_at, second_at, bond = (int(line[l: r]) for l, r in [(0, 3), (3, 6), (6, 9)])
                     bonds.append(Bonds(first_at, second_at, bond))
 
-                molecule = Molecule(atom_count, bond_count, atoms, bonds)
+                molecule = Molecule(atoms, bonds)
                 molecules.append(molecule)
 
             except ValueError:
