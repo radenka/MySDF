@@ -15,13 +15,10 @@ class Man:
         else:
             print('Marry him. NOW.')
 
-Marek = Man(7000, 5000)
+Marek = Man(13400, 1600)
 Marek.count_money()
 
 # Marek.salary = 10000  # changing values in object instance with 'instance.method = new_value'
 # Marek.your_salary = 10000
-#Marek.count_money()
+# Marek.count_money()
 
-# class Bond:
-#     def __init__(self, first, second, bond):
-#         pass
