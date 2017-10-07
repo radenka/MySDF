@@ -1,0 +1,1 @@
+# explicitni typovani pri definovani fce, List[int] - rika, ze to ma byt seznam integeru | from typing import List

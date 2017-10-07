@@ -51,7 +51,7 @@ class Molecule:
 
     def molecular_mass(self):
 
-        element_sum = Counter(atom.element for atom in self.atoms)
+        element_sum = Counter(atom.element for atom in self.atoms)  # del
         """
         example: elements in a molecule = ['N', 'O', 'O', 'O', 'H', 'H', 'H', 'H', 'H']
         Repetition of elements. The summarizing element_sum Counter() is created
@@ -82,58 +82,77 @@ class Molecule:
         molecule_statistics = Counter()
 
         for i in molecule_maxbonds:
-            molecule_statistics[i] += 1
+            molecule_statistics[i] += 1  # jeden radek
 
-        global final_statistics
+        #global final_statistics
         final_statistics += molecule_statistics
         # without 'global': UnboundLocalError: local variable referenced before assignment
         #  - interpreter doesn't identify it as glob var
 
-        """for key in molecule_statistics:
-            final_statistics[key] += molecule_statistics[key]"""
+        #for key in molecule_statistics:
+            #final_statistics[key] += molecule_statistics[key]  # doesn't work
         # python identifies final_statistics as global variable
 
         if args.verbose:
             print(molecule_statistics)
 
 
-def open_read_file(filename):
-    Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
-    molecules = list()
+class MoleculeSet:
+    def __init__(self, filename):
+        self.filename = filename
 
-    with open(filename) as file:
-        while True:
-            try:
-                for i in range(3):
-                    file.readline()
-                info = file.readline()
+    def open_read_file(self):
+        Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
+        molecules = list()
 
-                atoms = list()  # list of Atom objects included in a molecule
-                for i in range(int(info[0:3])):
-                    line = file.readline()
-                    element = line[31:34].strip()
-                    coordinates = tuple(float(line[l: r]) for l, r in [(3, 10), (13, 20), (23, 30)])
-                    atom = Atom(coordinates, element)
-                    atoms.append(atom)
-
-                bonds = list()  # stores information about atoms in a molecule and their valence
-                for i in range(int(info[3:6])):
-                    line = file.readline()
-                    first_at, second_at, bond = (int(line[l: r]) for l, r in [(0, 3), (3, 6), (6, 9)])
-                    bonds.append(Bonds(first_at, second_at, bond))
-
-                molecule = Molecule(atoms, bonds)
-                molecules.append(molecule)
-
-            except ValueError:
-                break
-
+        with open(self.filename) as file:
             while True:
-                line = file.readline()
-                if '$$$$' in line:
+                try:
+                    for i in range(3):
+                        file.readline()
+                    info = file.readline()
+
+                    atoms = list()  # list of Atom objects included in a molecule
+                    for i in range(int(info[0:3])):
+                        line = file.readline()
+                        element = line[31:34].strip()
+                        coordinates = tuple(float(line[l: r]) for l, r in [(3, 10), (13, 20), (23, 30)])
+                        atom = Atom(coordinates, element)
+                        atoms.append(atom)
+
+                    bonds = list()  # stores information about atoms in a molecule and their valence
+                    for i in range(int(info[3:6])):
+                        line = file.readline()
+                        first_at, second_at, bond = (int(line[l: r]) for l, r in [(0, 3), (3, 6), (6, 9)])
+                        bonds.append(Bonds(first_at, second_at, bond))
+
+                    molecule = Molecule(atoms, bonds)
+                    molecules.append(molecule)
+                    self.molecules = molecules  # new attribute added out of __init__
+
+                except ValueError:
                     break
 
-    return molecules
+                while True:
+                    line = file.readline()
+                    if '$$$$' in line:
+                        break
+
+        return molecules
+
+    def statistics(self):
+        final_statistics = Counter()
+
+        for n, molecule in enumerate(self.molecules, start=1):
+            if args.verbose:
+                print(str(n) + ':')
+            molecule.maxdistance()
+            molecule.molecular_mass()
+            molecule.maxbonds_counters()
+
+        print("\n### FINAL STATISTICS OF ATOM TYPES: ###")
+        print_final = pprint.PrettyPrinter(indent=2)
+        print_final.pprint(final_statistics)
 
 
 def get_atomic_masses():
@@ -142,23 +161,17 @@ def get_atomic_masses():
         for row in reader:
             relative_atomic_masses[row['Symbol']] = float(row['Atomic Weight'])
 
-    # periodic table storing - other possibility:
-    # relative_atomic_masses as local in get_atomic_masses, return it
-
 if __name__ == '__main__':
-    final_statistics = Counter()
     relative_atomic_masses = dict()
-
-    stack = open_read_file(args.filename)
     get_atomic_masses()
 
-    for n, molecule in enumerate(stack, start=1):
-        if args.verbose:
-            print(str(n)+':')
-        molecule.maxdistance()
-        molecule.molecular_mass()
-        molecule.maxbonds_counters()
+    sdf_set = MoleculeSet(args.filename)
+    sdf_set.open_read_file()
+    sdf_set.statistics()
 
-    print("\n### FINAL STATISTICS OF ATOM TYPES: ###")
-    print_final = pprint.PrettyPrinter(indent=2)
-    print_final.pprint(final_statistics)
+# if get_atomic_masses() == MoleculeSet method:
+    # return dictionary relat_atom_masses
+    # in __main__: relative_atomic_masses = set.get_atomic_masses()
+
+# @classmethod
+# uklidit si git

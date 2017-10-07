@@ -1,12 +1,11 @@
 class Man:
     "Ideal partner evaluation. 100% reliable."
 
-    def __init__(self,salary, your_salary): # (self, age, car, salary, debts)
+    def __init__(self, salary, your_salary): # (self, age, car, salary, debts)
         self.salary = salary
         self.your_salary = your_salary
 
     def count_money(self):
-
         if self.salary <= self.your_salary:
             print('No money. Dump him.')
         elif self.salary <= 1.5*self.your_salary:
@@ -16,5 +15,13 @@ class Man:
         else:
             print('Marry him. NOW.')
 
-Marek = Man(8000, 0)
+Marek = Man(7000, 5000)
 Marek.count_money()
+
+# Marek.salary = 10000  # changing values in object instance with 'instance.method = new_value'
+# Marek.your_salary = 10000
+#Marek.count_money()
+
+# class Bond:
+#     def __init__(self, first, second, bond):
+#         pass
