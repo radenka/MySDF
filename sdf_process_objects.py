@@ -10,6 +10,8 @@ parser = argparse.ArgumentParser(prog='SDF4ever',
                                  epilog='End of help block. Now try it yourself. Good luck!')
 parser.add_argument('-v', '--verbose', action='store_true', help='Prints computed data in detail.')
 parser.add_argument('filename')
+parser.add_argument('--maxweight', type=float,
+                    help='Prints names of molecules with maximum molecular weight given in the argument')
 args = parser.parse_args()
 if args.verbose:
     print('Chatty output turned on.')
@@ -25,12 +27,13 @@ class Atom:
 
 
 class Molecule:
-    def __init__(self, atoms, bonds):
+    def __init__(self, name, atoms, bonds):
+        self.name = name
         self.atoms = atoms
         self.bonds = bonds
 
     def __str__(self):
-        return f'Molecule: atoms:{self.atoms}, \nbonds:{self.bonds}'
+        return f'Molecule {self.name}: atoms:{self.atoms}, \nbonds:{self.bonds}'
 
     def maxdistance(self):
         maxdist = 0
@@ -50,22 +53,13 @@ class Molecule:
             print(f'Maxdist between atms {atom1} {atom2}; {maxdist:.4f}')
 
     def molecular_mass(self):
-
-        element_sum = Counter(atom.element for atom in self.atoms)  # del
-        """
-        example: elements in a molecule = ['N', 'O', 'O', 'O', 'H', 'H', 'H', 'H', 'H']
-        Repetition of elements. The summarizing element_sum Counter() is created
-        in order to reduce looping over keys in relative_atomic_masses. 
-        """
-
-        molecular_mass = sum(relative_atomic_masses[element]*count for element, count in element_sum.items())
-        # PEP8: line too long with ' * 1.66053904e-27' -> final_molecular_mass created
-        final_molecular_mass = molecular_mass * 1.66053904e-27
+        molecular_mass = sum(relative_atomic_masses[atom.element] for atom in self.atoms)
+        #final_molecular_mass = molecular_mass * 1.66053904e-27
 
         if args.verbose:
-            print(f'Weight = {final_molecular_mass:.3e} kg')
+            print(f'Relative molecular mass = {molecular_mass:.3f}')  # {final_molecular_mass:.3e} kg
 
-    def maxbonds_counters(self):
+    def maximum_bonds_statistics(self):
         maxbonds = [0] * len(self.atoms)
 
         for i in self.bonds:
@@ -77,38 +71,27 @@ class Molecule:
         # molecule_maxbonds == list of tuples created for each molecule [('N', 1), ('0', 2)]
         # contains information about elements and their maximum bonds
         molecule_maxbonds = list(zip([atom.element for atom in self.atoms], maxbonds))
-
-        # COUNTERS - duty to do
-        molecule_statistics = Counter()
-
-        for i in molecule_maxbonds:
-            molecule_statistics[i] += 1  # jeden radek
-
-        #global final_statistics
-        final_statistics += molecule_statistics
-        # without 'global': UnboundLocalError: local variable referenced before assignment
-        #  - interpreter doesn't identify it as glob var
-
-        #for key in molecule_statistics:
-            #final_statistics[key] += molecule_statistics[key]  # doesn't work
-        # python identifies final_statistics as global variable
+        molecule_statistics = Counter(i for i in molecule_maxbonds)
 
         if args.verbose:
             print(molecule_statistics)
+
+        return molecule_statistics
 
 
 class MoleculeSet:
     def __init__(self, filename):
         self.filename = filename
 
-    def open_read_file(self):
+        # data loaded in __init__ -> no need to call open_read_file function
         Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
         molecules = list()
 
         with open(self.filename) as file:
             while True:
                 try:
-                    for i in range(3):
+                    name = file.readline()[:10]
+                    for i in range(2):
                         file.readline()
                     info = file.readline()
 
@@ -126,9 +109,9 @@ class MoleculeSet:
                         first_at, second_at, bond = (int(line[l: r]) for l, r in [(0, 3), (3, 6), (6, 9)])
                         bonds.append(Bonds(first_at, second_at, bond))
 
-                    molecule = Molecule(atoms, bonds)
+                    molecule = Molecule(name, atoms, bonds)
                     molecules.append(molecule)
-                    self.molecules = molecules  # new attribute added out of __init__
+                    self.molecules = molecules  # new attribute added // another way?
 
                 except ValueError:
                     break
@@ -138,8 +121,6 @@ class MoleculeSet:
                     if '$$$$' in line:
                         break
 
-        return molecules
-
     def statistics(self):
         final_statistics = Counter()
 
@@ -148,7 +129,10 @@ class MoleculeSet:
                 print(str(n) + ':')
             molecule.maxdistance()
             molecule.molecular_mass()
-            molecule.maxbonds_counters()
+            final_statistics += molecule.maximum_bonds_statistics()
+
+            # if molecule.molecular_mass <= float(args.maxweight):
+
 
         print("\n### FINAL STATISTICS OF ATOM TYPES: ###")
         print_final = pprint.PrettyPrinter(indent=2)
@@ -166,12 +150,7 @@ if __name__ == '__main__':
     get_atomic_masses()
 
     sdf_set = MoleculeSet(args.filename)
-    sdf_set.open_read_file()
     sdf_set.statistics()
+    print(args.maxweight)
 
-# if get_atomic_masses() == MoleculeSet method:
-    # return dictionary relat_atom_masses
-    # in __main__: relative_atomic_masses = set.get_atomic_masses()
-
-# @classmethod
-# uklidit si git
+# @classmethod ??
