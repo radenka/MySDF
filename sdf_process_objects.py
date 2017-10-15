@@ -4,17 +4,26 @@ import math
 import pprint
 from collections import Counter
 from collections import namedtuple
+from typing import List
 
 parser = argparse.ArgumentParser(prog='SDF4ever',
                                  description='SDF format processing.\n',
                                  epilog='End of help block. Now try it yourself. Good luck!')
 parser.add_argument('-v', '--verbose', action='store_true', help='Prints computed data in detail.')
 parser.add_argument('filename')
+parser.add_argument('--minweight', type=float,
+                    help='Prints names and atom statistics of molecules with molecular mass given in the argument.\nUSAGE: type e.g. "60:70 blablabla"')
+"""
 parser.add_argument('--maxweight', type=float,
                     help='Prints names of molecules with maximum molecular weight given in the argument')
+parser.add_argument('--minweight', type=float,
+                    help='Prints names of molecules with minimum molecular weight given in the argument')
+"""
 args = parser.parse_args()
 if args.verbose:
     print('Chatty output turned on.')
+
+Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
 
 
 class Atom:
@@ -37,8 +46,6 @@ class Molecule:
 
     def maxdistance(self):
         maxdist = 0
-        atom1 = 1    # initialization required by PEP8
-        atom2 = 1
 
         for m, atom_a in enumerate(self.atoms):
             for n, atom_b in enumerate(self.atoms[1:], start=m+1):
@@ -46,18 +53,15 @@ class Molecule:
 
                 if distance > maxdist:
                     maxdist = distance
-                    atom1 = m+1
-                    atom2 = n+1-m    # m subtraction because of start=m+1
 
-        if args.verbose:
-            print(f'Maxdist between atms {atom1} {atom2}; {maxdist:.4f}')
+        return maxdist
 
+    @property
     def molecular_mass(self):
         molecular_mass = sum(relative_atomic_masses[atom.element] for atom in self.atoms)
-        #final_molecular_mass = molecular_mass * 1.66053904e-27
+        # final_molecular_mass = molecular_mass * 1.66053904e-27
 
-        if args.verbose:
-            print(f'Relative molecular mass = {molecular_mass:.3f}')  # {final_molecular_mass:.3e} kg
+        return molecular_mass
 
     def maximum_bonds_statistics(self):
         maxbonds = [0] * len(self.atoms)
@@ -73,24 +77,22 @@ class Molecule:
         molecule_maxbonds = list(zip([atom.element for atom in self.atoms], maxbonds))
         molecule_statistics = Counter(i for i in molecule_maxbonds)
 
-        if args.verbose:
-            print(molecule_statistics)
-
         return molecule_statistics
 
 
 class MoleculeSet:
-    def __init__(self, filename):
-        self.filename = filename
+    def __init__(self, molecules: List[Molecule]):
+        self.molecules = molecules
 
-        # data loaded in __init__ -> no need to call open_read_file function
-        Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
-        molecules = list()
 
-        with open(self.filename) as file:
+    @classmethod
+    def load_from_file(cls, filename):
+        molecules = []
+
+        with open(filename) as file:
             while True:
                 try:
-                    name = file.readline()[:10]
+                    name = file.readline()[:10].strip()
                     for i in range(2):
                         file.readline()
                     info = file.readline()
@@ -111,7 +113,6 @@ class MoleculeSet:
 
                     molecule = Molecule(name, atoms, bonds)
                     molecules.append(molecule)
-                    self.molecules = molecules  # new attribute added // another way?
 
                 except ValueError:
                     break
@@ -121,22 +122,79 @@ class MoleculeSet:
                     if '$$$$' in line:
                         break
 
-    def statistics(self):
-        final_statistics = Counter()
+        return MoleculeSet(molecules)
 
+    def get_statistics(self):
+        final_statistics = Counter()
         for n, molecule in enumerate(self.molecules, start=1):
-            if args.verbose:
-                print(str(n) + ':')
-            molecule.maxdistance()
-            molecule.molecular_mass()
             final_statistics += molecule.maximum_bonds_statistics()
 
-            # if molecule.molecular_mass <= float(args.maxweight):
+        return final_statistics
 
+    def print_statistics(self, final_statistics):
 
-        print("\n### FINAL STATISTICS OF ATOM TYPES: ###")
+        if args.verbose:
+            if len(self.molecules) == 500:  # sets with different number of molecules? --> def print_filtered_mols() ?
+                pass
+            else:
+                for n, molecule in enumerate(self.molecules, start=1):
+                    print(str("%3d" % n)+': ', end="")
+                    print(f'Relative molecular mass = {molecule.molecular_mass:.3f}')
+                print()
+
+        print("### FINAL STATISTICS OF ATOM TYPES: ###")
         print_final = pprint.PrettyPrinter(indent=2)
         print_final.pprint(final_statistics)
+        print()
+
+    def filter_molecules_by_minweight(self):
+        molecules = []
+        names = []
+
+        # --max-weight, action='store_true'
+        # why the hell it isn't possible
+        for molecule in self.molecules:
+            if molecule.molecular_mass >= args.minweight:
+                names.append(molecule.name)
+                molecules.append(molecule)
+
+        if len(names) == 0:
+            print('No molecule with those conditions')
+        else:
+            print('Molecules with required minimum weight:', str(len(names)))
+            print_names = pprint.PrettyPrinter(indent=3, compact=True, width=75)
+            print_names.pprint(names)
+        print()
+
+        return MoleculeSet(molecules)
+
+    def print_filtered_molecules(self):
+        # implement in order to print molecular mass of filtered molecules only
+        # currently: molecules printed out in prints_statistics() under verbose
+        # problem: if args.verbose: program prints mol mass of all molecules in SDF and I don't want it to do it
+        pass
+
+    """def filter_molecules_by_weight(self):
+        try:
+            min, max = args.weight.split(':')
+            if min == '':
+                filter_molecules_by_ma
+
+
+
+        except ValueError:
+            print('Wrong separator. Usage of ":" required.')"""
+
+
+
+    def filter_molecules_by_atom_types(self):
+        # requested_atoms = [element.strip().upper() for element in args.onlyatomtypes.split(',')]
+        # molecules = []
+        # for molecule.Atom.element in self.molecules: vnejsi cyklus pres elements, vnitrni pres requested atoms
+        # if hodonota vnejsiho != hodnota n=vnitrniho: preskocit na dalsi molekulu
+        # else: molecules.append(molecule), return MolSet(mols)
+
+        pass
 
 
 def get_atomic_masses():
@@ -149,8 +207,22 @@ if __name__ == '__main__':
     relative_atomic_masses = dict()
     get_atomic_masses()
 
-    sdf_set = MoleculeSet(args.filename)
-    sdf_set.statistics()
-    print(args.maxweight)
+    sdf_set = MoleculeSet.load_from_file(args.filename)
+    data = sdf_set.get_statistics()
+    sdf_set.print_statistics(data)
 
-# @classmethod ??
+
+    # using --minweight function and appropriate argument
+    set2 = sdf_set.filter_molecules_by_minweight()
+    data2 = set2.get_statistics()
+    set2.print_statistics(data2)
+
+
+"""
+univerzalni konstruktor pro MoleculeSet x
+"classmethod: load_from_file(filename) x 
+nacitani souboru jde do vlastni metody, vraci objekt MoleculeSetu (return cls(molecules)) x
+MoleculSet mk v initu list mol (prazdny - neni treba definovat, rovnou inicializovano v load_from_file()
+oddeleni vypisu a vypoctu
+filtr molekul - pres vahu, pocet atomu, vaha od x do y: pri zadavani argumentu v shellu: 
+"""
