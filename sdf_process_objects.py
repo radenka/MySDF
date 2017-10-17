@@ -11,8 +11,9 @@ parser = argparse.ArgumentParser(prog='SDF4ever',
                                  epilog='End of help block. Now try it yourself. Good luck!')
 parser.add_argument('-v', '--verbose', action='store_true', help='Prints computed data in detail.')
 parser.add_argument('filename')
-parser.add_argument('--minweight', type=float,
+parser.add_argument('--weight', type=str,
                     help='Prints names and atom statistics of molecules with molecular mass given in the argument.\nUSAGE: type e.g. "60:70 blablabla"')
+parser.add_argument('--onlyatomtypes', type=str, help='Returns molecules containing given elements only.')
 """
 parser.add_argument('--maxweight', type=float,
                     help='Prints names of molecules with maximum molecular weight given in the argument')
@@ -84,7 +85,6 @@ class MoleculeSet:
     def __init__(self, molecules: List[Molecule]):
         self.molecules = molecules
 
-
     @classmethod
     def load_from_file(cls, filename):
         molecules = []
@@ -132,14 +132,14 @@ class MoleculeSet:
         return final_statistics
 
     def print_statistics(self, final_statistics):
-
         if args.verbose:
             if len(self.molecules) == 500:  # sets with different number of molecules? --> def print_filtered_mols() ?
                 pass
             else:
                 for n, molecule in enumerate(self.molecules, start=1):
-                    print(str("%3d" % n)+': ', end="")
-                    print(f'Relative molecular mass = {molecule.molecular_mass:.3f}')
+                    print(str("%3d" % n)+':', molecule.name, end=" ")
+                    print(f'Relative molecular mass = {molecule.molecular_mass:.3f}', end=' ')
+                    print(set([Atom.element for Atom in molecule.atoms]))
                 print()
 
         print("### FINAL STATISTICS OF ATOM TYPES: ###")
@@ -151,8 +151,6 @@ class MoleculeSet:
         molecules = []
         names = []
 
-        # --max-weight, action='store_true'
-        # why the hell it isn't possible
         for molecule in self.molecules:
             if molecule.molecular_mass >= args.minweight:
                 names.append(molecule.name)
@@ -169,32 +167,48 @@ class MoleculeSet:
         return MoleculeSet(molecules)
 
     def print_filtered_molecules(self):
+        # names and relative molecular masses; print_statistics() - only final_statistics of atom types ?
         # implement in order to print molecular mass of filtered molecules only
         # currently: molecules printed out in prints_statistics() under verbose
         # problem: if args.verbose: program prints mol mass of all molecules in SDF and I don't want it to do it
         pass
 
-    """def filter_molecules_by_weight(self):
+    def filter_molecules_by_weight(self):
+        molecules = []
+
         try:
-            min, max = args.weight.split(':')
-            if min == '':
-                filter_molecules_by_ma
+            # (float(i) for i in args.weight.split(':')) - not possible because of ''
+            minimum, maximum = args.weight.split(':')
+            if minimum == '': minimum = '0'
+            if maximum == '': maximum = '100000'  ###
 
-
+            for molecule in self.molecules:
+                molecular_mass = molecule.molecular_mass
+                if molecular_mass >= float(minimum) and molecular_mass <= float(maximum):
+                    molecules.append(molecule)
 
         except ValueError:
-            print('Wrong separator. Usage of ":" required.')"""
+            print('Wrong separator. Usage of ":" required.')
 
-
+        return MoleculeSet(molecules)
 
     def filter_molecules_by_atom_types(self):
-        # requested_atoms = [element.strip().upper() for element in args.onlyatomtypes.split(',')]
-        # molecules = []
-        # for molecule.Atom.element in self.molecules: vnejsi cyklus pres elements, vnitrni pres requested atoms
-        # if hodonota vnejsiho != hodnota n=vnitrniho: preskocit na dalsi molekulu
-        # else: molecules.append(molecule), return MolSet(mols)
+        requested_elements = [element.strip().upper() for element in args.onlyatomtypes.split(',')]
+        molecules = []
 
-        pass
+        for molecule in self.molecules:
+            molecule_elements = set(Atom.element for Atom in molecule.atoms)
+
+            for n, element in enumerate(molecule_elements, start=1):
+                if element in requested_elements:
+                    if n == len(molecule_elements):
+                        molecules.append(molecule)
+                    else:
+                        continue
+                else:
+                    break
+
+        return MoleculeSet(molecules)
 
 
 def get_atomic_masses():
@@ -208,21 +222,20 @@ if __name__ == '__main__':
     get_atomic_masses()
 
     sdf_set = MoleculeSet.load_from_file(args.filename)
-    data = sdf_set.get_statistics()
-    sdf_set.print_statistics(data)
+    sdf_set.get_statistics()
+    sdf_set.print_statistics(sdf_set.get_statistics())   ###
 
+    set2 = sdf_set.filter_molecules_by_weight()
+    set2.print_statistics(set2.get_statistics())
 
-    # using --minweight function and appropriate argument
-    set2 = sdf_set.filter_molecules_by_minweight()
-    data2 = set2.get_statistics()
-    set2.print_statistics(data2)
+    set3 = sdf_set.filter_molecules_by_atom_types()
+    set3.print_statistics(set3.get_statistics())
+
+    set4 = sdf_set.filter_molecules_by_weight().filter_molecules_by_atom_types()
+    set4.print_statistics(set4.get_statistics())
 
 
 """
-univerzalni konstruktor pro MoleculeSet x
-"classmethod: load_from_file(filename) x 
-nacitani souboru jde do vlastni metody, vraci objekt MoleculeSetu (return cls(molecules)) x
-MoleculSet mk v initu list mol (prazdny - neni treba definovat, rovnou inicializovano v load_from_file()
-oddeleni vypisu a vypoctu
-filtr molekul - pres vahu, pocet atomu, vaha od x do y: pri zadavani argumentu v shellu: 
+DUTY TO DO
+
 """
