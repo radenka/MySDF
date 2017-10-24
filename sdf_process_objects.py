@@ -5,31 +5,23 @@ import pprint
 from collections import Counter
 from collections import namedtuple
 from typing import List
+import sys
 
 parser = argparse.ArgumentParser(prog='SDF4ever',
                                  description='SDF format processing.\n',
                                  epilog='End of help block. Now try it yourself. Good luck!')
-parser.add_argument('-v', '--verbose', action='store_true', help='Prints computed data in detail.')
 parser.add_argument('filename')
 parser.add_argument('--weight', type=str,
-                    help='Prints names and atom statistics of molecules with molecular mass given in the argument.\nUSAGE: type e.g. "60:70 blablabla"')
-parser.add_argument('--onlyatomtypes', type=str, help='Returns molecules containing given elements only.')
-"""
-parser.add_argument('--maxweight', type=float,
-                    help='Prints names of molecules with maximum molecular weight given in the argument')
-parser.add_argument('--minweight', type=float,
-                    help='Prints names of molecules with minimum molecular weight given in the argument')
-"""
+                    help='Returns molecule set of molecules with molecular mass given in the argument.\nUSAGE: type e.g."60:70"')
+parser.add_argument('--onlyatomtypes', type=str, help='Returns molelcule set of molecules containing given elements or their subset.')
 args = parser.parse_args()
-if args.verbose:
-    print('Chatty output turned on.')
 
 Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
 
 
 class Atom:
     def __init__(self, coordinates, element):
-        self.coords = coordinates  # renaming arguments inside of the class; coordinates = tuple
+        self.coords = coordinates
         self.element = element
 
     def __str__(self):
@@ -131,16 +123,13 @@ class MoleculeSet:
 
         return final_statistics
 
-    def print_statistics(self, final_statistics):
-        if args.verbose:
-            if len(self.molecules) == 500:  # sets with different number of molecules? --> def print_filtered_mols() ?
-                pass
-            else:
-                for n, molecule in enumerate(self.molecules, start=1):
-                    print(str("%3d" % n)+':', molecule.name, end=" ")
-                    print(f'Relative molecular mass = {molecule.molecular_mass:.3f}', end=' ')
-                    print(set([Atom.element for Atom in molecule.atoms]))
-                print()
+    def print_statistics(self, final_statistics, print_detailed=False):
+        if print_detailed:
+            for n, molecule in enumerate(self.molecules, start=1):
+                print(str("%3d" % n) + ':', molecule.name, end=" ")
+                print(f'Relative molecular mass = {molecule.molecular_mass:.3f}', end=' ')
+                print(set([Atom.element for Atom in molecule.atoms]))
+            print()
 
         print("### FINAL STATISTICS OF ATOM TYPES: ###")
         print_final = pprint.PrettyPrinter(indent=2)
@@ -166,21 +155,14 @@ class MoleculeSet:
 
         return MoleculeSet(molecules)
 
-    def print_filtered_molecules(self):
-        # names and relative molecular masses; print_statistics() - only final_statistics of atom types ?
-        # implement in order to print molecular mass of filtered molecules only
-        # currently: molecules printed out in prints_statistics() under verbose
-        # problem: if args.verbose: program prints mol mass of all molecules in SDF and I don't want it to do it
-        pass
-
     def filter_molecules_by_weight(self):
         molecules = []
 
         try:
             # (float(i) for i in args.weight.split(':')) - not possible because of ''
             minimum, maximum = args.weight.split(':')
-            if minimum == '': minimum = '0'
-            if maximum == '': maximum = '100000'  ###
+            if minimum == '': minimum = 0
+            if maximum == '': maximum = float('inf')
 
             for molecule in self.molecules:
                 molecular_mass = molecule.molecular_mass
@@ -193,20 +175,14 @@ class MoleculeSet:
         return MoleculeSet(molecules)
 
     def filter_molecules_by_atom_types(self):
-        requested_elements = [element.strip().upper() for element in args.onlyatomtypes.split(',')]
+        requested_elements = set([element.strip().upper() for element in args.onlyatomtypes.split(',')])
         molecules = []
 
         for molecule in self.molecules:
             molecule_elements = set(Atom.element for Atom in molecule.atoms)
 
-            for n, element in enumerate(molecule_elements, start=1):
-                if element in requested_elements:
-                    if n == len(molecule_elements):
-                        molecules.append(molecule)
-                    else:
-                        continue
-                else:
-                    break
+            if molecule_elements <= requested_elements:
+                molecules.append(molecule)
 
         return MoleculeSet(molecules)
 
@@ -217,22 +193,39 @@ def get_atomic_masses():
         for row in reader:
             relative_atomic_masses[row['Symbol']] = float(row['Atomic Weight'])
 
+
+def check_arguments():
+    if args.weight:
+        if ':' in args.weight:
+            try:
+                mini, maxi = args.weight.split(':')
+                mini = float(mini)
+                maxi = float(maxi)
+            except ValueError:
+                print("--weight argument: wrong input. Try again.\nEnd of program.")
+                sys.exit()
+        else:
+            print('Usage of ":" required. Check it and try again.\nEnd of program.')
+            sys.exit()
+
 if __name__ == '__main__':
+    check_arguments()
+
     relative_atomic_masses = dict()
     get_atomic_masses()
 
     sdf_set = MoleculeSet.load_from_file(args.filename)
     sdf_set.get_statistics()
-    sdf_set.print_statistics(sdf_set.get_statistics())   ###
+    sdf_set.print_statistics(sdf_set.get_statistics())
 
     set2 = sdf_set.filter_molecules_by_weight()
     set2.print_statistics(set2.get_statistics())
 
     set3 = sdf_set.filter_molecules_by_atom_types()
-    set3.print_statistics(set3.get_statistics())
+    set3.print_statistics(set3.get_statistics(), print_detailed=True)
 
     set4 = sdf_set.filter_molecules_by_weight().filter_molecules_by_atom_types()
-    set4.print_statistics(set4.get_statistics())
+    set4.print_statistics(set4.get_statistics(), print_detailed=True)
 
 
 """
