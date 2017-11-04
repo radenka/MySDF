@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(prog='SDF4ever',
 parser.add_argument('filename')
 parser.add_argument('--weight', type=str,
                     help='Returns molecule set of molecules with molecular mass given in the argument.\nUSAGE: type e.g."60:70"')
-parser.add_argument('--onlyatomtypes', type=str, help='Returns molelcule set of molecules containing given elements or their subset.')
+parser.add_argument('--onlyatomtypes', type=str, help='Returns molecule set containing molecules of given elements or their subset.')
 args = parser.parse_args()
 
 Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
@@ -29,10 +29,11 @@ class Atom:
 
 
 class Molecule:
-    def __init__(self, name, atoms, bonds):
+    def __init__(self, name, atoms, bonds, moleculestring):
         self.name = name
         self.atoms = atoms
         self.bonds = bonds
+        self.moleculestring = moleculestring
 
     def __str__(self):
         return f'Molecule {self.name}: atoms:{self.atoms}, \nbonds:{self.bonds}'
@@ -84,14 +85,20 @@ class MoleculeSet:
         with open(filename) as file:
             while True:
                 try:
+                    moleculestring = ""
                     name = file.readline()[:10].strip()
+                    moleculestring += (name + '\n')
+
                     for i in range(2):
-                        file.readline()
+                        line = file.readline()
+                        moleculestring += line
                     info = file.readline()
+                    moleculestring += info
 
                     atoms = list()  # list of Atom objects included in a molecule
                     for i in range(int(info[0:3])):
                         line = file.readline()
+                        moleculestring += line
                         element = line[31:34].strip()
                         coordinates = tuple(float(line[l: r]) for l, r in [(3, 10), (13, 20), (23, 30)])
                         atom = Atom(coordinates, element)
@@ -100,10 +107,12 @@ class MoleculeSet:
                     bonds = list()  # stores information about atoms in a molecule and their valence
                     for i in range(int(info[3:6])):
                         line = file.readline()
+                        moleculestring += line
                         first_at, second_at, bond = (int(line[l: r]) for l, r in [(0, 3), (3, 6), (6, 9)])
                         bonds.append(Bonds(first_at, second_at, bond))
 
-                    molecule = Molecule(name, atoms, bonds)
+                    moleculestring += '$$$$\n'
+                    molecule = Molecule(name, atoms, bonds, moleculestring)
                     molecules.append(molecule)
 
                 except ValueError:
@@ -123,7 +132,7 @@ class MoleculeSet:
 
         return final_statistics
 
-    def print_statistics(self, final_statistics, print_detailed=False):
+    def print_statistics(self, print_detailed=False):
         if print_detailed:
             for n, molecule in enumerate(self.molecules, start=1):
                 print(str("%3d" % n) + ':', molecule.name, end=" ")
@@ -133,49 +142,22 @@ class MoleculeSet:
 
         print("### FINAL STATISTICS OF ATOM TYPES: ###")
         print_final = pprint.PrettyPrinter(indent=2)
-        print_final.pprint(final_statistics)
+        print_final.pprint(self.get_statistics())
         print()
 
-    def filter_molecules_by_minweight(self):
+        return MoleculeSet(self.molecules)
+
+    def filter_molecules_by_weight(self, minweight, maxweight):
         molecules = []
-        names = []
 
         for molecule in self.molecules:
-            if molecule.molecular_mass >= args.minweight:
-                names.append(molecule.name)
+            molecular_mass = molecule.molecular_mass
+            if molecular_mass >= float(minweight) and molecular_mass <= float(maxweight):
                 molecules.append(molecule)
 
-        if len(names) == 0:
-            print('No molecule with those conditions')
-        else:
-            print('Molecules with required minimum weight:', str(len(names)))
-            print_names = pprint.PrettyPrinter(indent=3, compact=True, width=75)
-            print_names.pprint(names)
-        print()
-
         return MoleculeSet(molecules)
 
-    def filter_molecules_by_weight(self):
-        molecules = []
-
-        try:
-            # (float(i) for i in args.weight.split(':')) - not possible because of ''
-            minimum, maximum = args.weight.split(':')
-            if minimum == '': minimum = 0
-            if maximum == '': maximum = float('inf')
-
-            for molecule in self.molecules:
-                molecular_mass = molecule.molecular_mass
-                if molecular_mass >= float(minimum) and molecular_mass <= float(maximum):
-                    molecules.append(molecule)
-
-        except ValueError:
-            print('Wrong separator. Usage of ":" required.')
-
-        return MoleculeSet(molecules)
-
-    def filter_molecules_by_atom_types(self):
-        requested_elements = set([element.strip().upper() for element in args.onlyatomtypes.split(',')])
+    def filter_molecules_by_atom_types(self, requested_elements):
         molecules = []
 
         for molecule in self.molecules:
@@ -186,6 +168,11 @@ class MoleculeSet:
 
         return MoleculeSet(molecules)
 
+    def create_new_SDFfile(self, filename):
+        with open(filename + '.sdf', 'w') as file:
+            for Molecule in self.molecules:
+                file.write(Molecule.moleculestring)
+
 
 def get_atomic_masses():
     with open('Periodic_Table_Of_Elements.csv') as csvfile:
@@ -195,40 +182,64 @@ def get_atomic_masses():
 
 
 def check_arguments():
+    minimum = None
+    maximum = None
+    requested_elements = None
+
     if args.weight:
         if ':' in args.weight:
             try:
-                mini, maxi = args.weight.split(':')
-                mini = float(mini)
-                maxi = float(maxi)
+                minimum, maximum = args.weight.split(':')
+                if minimum == '':
+                    minimum = 0
+                elif maximum == '':
+                    maximum = float('inf')
+                else:
+                    minimum = float(minimum)
+                    maximum = float(maximum)
+
             except ValueError:
-                print("--weight argument: wrong input. Try again.\nEnd of program.")
+                print("--weight argument: wrong input. Check it and try again.\nEnd of program.")
                 sys.exit()
         else:
             print('Usage of ":" required. Check it and try again.\nEnd of program.')
             sys.exit()
 
-if __name__ == '__main__':
-    check_arguments()
+    if args.onlyatomtypes:
+        for i in [element.strip() for element in args.onlyatomtypes.split(',')]:
+            if i not in relative_atomic_masses.keys():
+                print('--onlyatomtypes argument: wrong input. Check it and try again.\nEnd of program.')
+                sys.exit()
+        else:
+            requested_elements = set([element.strip() for element in args.onlyatomtypes.split(',')])
 
+    return minimum, maximum, requested_elements
+
+if __name__ == '__main__':
     relative_atomic_masses = dict()
     get_atomic_masses()
 
+    minimum, maximum, requested_elements = check_arguments()
+
     sdf_set = MoleculeSet.load_from_file(args.filename)
     sdf_set.get_statistics()
-    sdf_set.print_statistics(sdf_set.get_statistics())
+    sdf_set.print_statistics()
 
-    set2 = sdf_set.filter_molecules_by_weight()
+    set2 = sdf_set.filter_molecules_by_weight(minimum, maximum)
     set2.print_statistics(set2.get_statistics())
 
-    set3 = sdf_set.filter_molecules_by_atom_types()
-    set3.print_statistics(set3.get_statistics(), print_detailed=True)
+    set3 = sdf_set.filter_molecules_by_atom_types(requested_elements)
+    set3.print_statistics(print_detailed=True)
+    #set3.create_new_SDFfile('atom_types_'+''.join(sorted(list(requested_elements)))+'_'+args.filename[:-4])
 
-    set4 = sdf_set.filter_molecules_by_weight().filter_molecules_by_atom_types()
-    set4.print_statistics(set4.get_statistics(), print_detailed=True)
+    # set4 = sdf_set.filter_molecules_by_weight().filter_molecules_by_atom_types()
+    # set4.print_statistics(print_detailed=True)
 
 
 """
 DUTY TO DO
-
+1) atribut Molecule - moleculestring - nacit radky puv souboru jako string
+2) nacist do slovniku jmeno molekuly: zapamatovat cisla radku od-do dict[NSC1] = (60, 70)
+vymyslet si vlastnosti molekul, co by se daly z SDFka vyvodit
+filtr molekul - vola jednotlive podfukce, ktere kontroluji jednotlive vlastosti def check_weight), vraci bool
 """
