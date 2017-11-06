@@ -81,23 +81,29 @@ class MoleculeSet:
     def load_from_file(cls, filename):
         molecules = []
         molecule_pointers = {}
-        start = 0
-        stop = 0
+        startbyte_actual = 0
+        startbyte_next = 0
 
         with open(filename) as file:
             while True:
                 try:
-                    name = file.readline()[:10].strip()
+                    line_count = 0
+                    line = file.readline()
+                    name = line[:10].strip()
+                    startbyte_next += len(line)
 
                     for i in range(2):
                         line = file.readline()
+                        startbyte_next += len(line)
                     info = file.readline()
-                    stop += 4
+                    startbyte_next += len(info)
+                    line_count += 4
 
                     atoms = list()  # list of Atom objects included in a molecule
                     for i in range(int(info[0:3])):
                         line = file.readline()
-                        stop += 1
+                        startbyte_next += len(line)
+                        line_count += 1
                         element = line[31:34].strip()
                         coordinates = tuple(float(line[l: r]) for l, r in [(3, 10), (13, 20), (23, 30)])
                         atom = Atom(coordinates, element)
@@ -106,7 +112,8 @@ class MoleculeSet:
                     bonds = list()  # stores information about atoms in a molecule and their valence
                     for i in range(int(info[3:6])):
                         line = file.readline()
-                        stop += 1
+                        startbyte_next += len(line)
+                        line_count += 1
                         first_at, second_at, bond = (int(line[l: r]) for l, r in [(0, 3), (3, 6), (6, 9)])
                         bonds.append(Bonds(first_at, second_at, bond))
                     molecule = Molecule(name, atoms, bonds)
@@ -117,10 +124,11 @@ class MoleculeSet:
 
                 while True:
                     line = file.readline()
-                    stop += 1
+                    startbyte_next += len(line)
+                    line_count += 1
                     if '$$$$' in line:
-                        molecule_pointers[name] = start, stop
-                        start = stop+1
+                        molecule_pointers[name] = line_count, startbyte_actual
+                        startbyte_actual = startbyte_next
                         break
 
         return MoleculeSet(molecules), molecule_pointers
@@ -170,14 +178,11 @@ class MoleculeSet:
         with open(filename + '.sdf', 'w') as file:
             with open(args.filename, 'r') as reader:
                 for Molecule in self.molecules:
-                    # print(Molecule.name)
-                    start, stop = molecule_pointers[Molecule.name]
-                    # print(molecule_pointers)
-                    reader.seek(start)    # seek() jumps to certain BYTE, not LINE!!!
-                    for i in range(stop-start):
+                    line_count, startbyte = molecule_pointers[Molecule.name]
+                    reader.seek(startbyte)    # seek() jumps to certain BYTE, not LINE!!!
+                    for i in range(line_count):
                         line = reader.readline()
                         file.write(line)
-                        # print(line)
 
 
 def get_atomic_masses():
@@ -237,7 +242,7 @@ if __name__ == '__main__':
 
     set3 = sdf_set.filter_molecules_by_atom_types(requested_elements)
     set3.print_statistics(print_detailed=True)
-    set3.create_SDFfile('molecular_weight_'+args.filename[:-4])
+    set3.create_SDFfile('atom_types_'+''.join(sorted(list(requested_elements)))+'_'+args.filename[:-4])
 
     # set4 = sdf_set.filter_molecules_by_weight().filter_molecules_by_atom_types()
     # set4.print_statistics(print_detailed=True)
@@ -245,8 +250,5 @@ if __name__ == '__main__':
 
 """
 DUTY TO DO
-1) atribut Molecule - moleculestring - nacit radky puv souboru jako string
-2) nacist do slovniku jmeno molekuly: zapamatovat cisla radku od-do dict[NSC1] = (60, 70)
-vymyslet si vlastnosti molekul, co by se daly z SDFka vyvodit
-filtr molekul - vola jednotlive podfukce, ktere kontroluji jednotlive vlastosti def check_weight), vraci bool
+filtr molekul - vola jednotlive podfukce, ktere kontroluji jednotlive vlastosti def check_weight(), vraci bool
 """
