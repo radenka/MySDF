@@ -29,25 +29,26 @@ class Atom:
 
 
 class Molecule:
-    def __init__(self, name, atoms, bonds):
+    def __init__(self, name, atoms, bonds, moleculestring):
         self.name = name
         self.atoms = atoms
         self.bonds = bonds
+        self.moleculestring = moleculestring
 
     def __str__(self):
         return f'Molecule {self.name}: atoms:{self.atoms}, \nbonds:{self.bonds}'
 
     def maxdistance(self):
-        maxdistance = 0
+        maxdist = 0
 
         for m, atom_a in enumerate(self.atoms):
             for n, atom_b in enumerate(self.atoms[1:], start=m+1):
                 distance = math.sqrt(sum((atom_a.coords[k] - atom_b.coords[k])**2 for k in range(3)))
 
-                if distance > maxdistance:
-                    maxdistance = distance
+                if distance > maxdist:
+                    maxdist = distance
 
-        return maxdistance
+        return maxdist
 
     @property
     def molecular_mass(self):
@@ -72,6 +73,18 @@ class Molecule:
 
         return molecule_statistics
 
+    def check_weight(self, minweight, maxweight):
+        if self.molecular_mass >= float(minweight) and self.molecular_mass <= float(maxweight):
+            return True
+        else:
+            return False
+
+    def check_elements(self, requested_elements):
+        molecule_elements = set(Atom.element for Atom in self.atoms)
+        if molecule_elements <= requested_elements:
+            return True
+        else:
+            return False
 
 class MoleculeSet:
     def __init__(self, molecules: List[Molecule]):
@@ -80,30 +93,24 @@ class MoleculeSet:
     @classmethod
     def load_from_file(cls, filename):
         molecules = []
-        molecule_pointers = {}
-        startbyte_actual = 0
-        startbyte_next = 0
 
         with open(filename) as file:
             while True:
                 try:
-                    line_count = 0
-                    line = file.readline()
-                    name = line[:10].strip()
-                    startbyte_next += len(line)
+                    moleculestring = ""
+                    name = file.readline()[:10].strip()
+                    moleculestring += (name + '\n')
 
                     for i in range(2):
                         line = file.readline()
-                        startbyte_next += len(line)
+                        moleculestring += line
                     info = file.readline()
-                    startbyte_next += len(info)
-                    line_count += 4
+                    moleculestring += info
 
                     atoms = list()  # list of Atom objects included in a molecule
                     for i in range(int(info[0:3])):
                         line = file.readline()
-                        startbyte_next += len(line)
-                        line_count += 1
+                        moleculestring += line
                         element = line[31:34].strip()
                         coordinates = tuple(float(line[l: r]) for l, r in [(3, 10), (13, 20), (23, 30)])
                         atom = Atom(coordinates, element)
@@ -112,26 +119,23 @@ class MoleculeSet:
                     bonds = list()  # stores information about atoms in a molecule and their valence
                     for i in range(int(info[3:6])):
                         line = file.readline()
-                        startbyte_next += len(line)
-                        line_count += 1
+                        moleculestring += line
                         first_at, second_at, bond = (int(line[l: r]) for l, r in [(0, 3), (3, 6), (6, 9)])
                         bonds.append(Bonds(first_at, second_at, bond))
-                    molecule = Molecule(name, atoms, bonds)
-                    molecules.append(molecule)
 
                 except ValueError:
                     break
 
                 while True:
                     line = file.readline()
-                    startbyte_next += len(line)
-                    line_count += 1
+                    moleculestring += line
+                    if 'END' in line:
+                        molecule = Molecule(name, atoms, bonds, moleculestring)
+                        molecules.append(molecule)
                     if '$$$$' in line:
-                        molecule_pointers[name] = line_count, startbyte_actual
-                        startbyte_actual = startbyte_next
                         break
 
-        return MoleculeSet(molecules), molecule_pointers
+        return MoleculeSet(molecules)
 
     def get_statistics(self):
         final_statistics = Counter()
@@ -155,35 +159,33 @@ class MoleculeSet:
 
         return MoleculeSet(self.molecules)
 
-    def filter_molecules_by_weight(self, minweight, maxweight):
+    def filter_molecules_by_properties(self, arguments):
+        minimum, maximum, requested_elements = arguments
         molecules = []
 
         for molecule in self.molecules:
-            molecular_mass = molecule.molecular_mass
-            if molecular_mass >= float(minweight) and molecular_mass <= float(maxweight):
-                molecules.append(molecule)
+            if args.weight and not molecule.check_weight(minimum, maximum):
+                continue
+            if args.onlyatomtypes and not molecule.check_elements(requested_elements):
+                continue
+            molecules.append(molecule)
 
         return MoleculeSet(molecules)
 
-    def filter_molecules_by_atom_types(self, requested_elements):
-        molecules = []
-        for molecule in self.molecules:
-            molecule_elements = set(Atom.element for Atom in molecule.atoms)
-            if molecule_elements <= requested_elements:
-                molecules.append(molecule)
-
-        return MoleculeSet(molecules)
-
-    def create_SDFfile(self, filename):
+    def create_new_SDFfile(self, filename):
         with open(filename + '.sdf', 'w') as file:
-            with open(args.filename, 'r') as reader:
-                for Molecule in self.molecules:
-                    line_count, startbyte = molecule_pointers[Molecule.name]
-                    reader.seek(startbyte)    # seek() jumps to certain BYTE, not LINE!!!
-                    for i in range(line_count):
-                        line = reader.readline()
+            for Molecule in self.molecules:
+                file.write(Molecule.moleculestring)
+                file.write('$$$$\n')
+    """   
+    def create_SDFfile(self, filename):
+        with open(filename + '.sdf', 'w') as file, open(args.filename, 'r') as reader:
+            for n, line in enumerate(reader.readlines(), start=1):
+                for Molecule in self.molecules:   ### optimalizace?? - neprochazet jiz projite molekuly
+                    start, stop = molecule_pointers[Molecule.name]
+                    if n <= stop and n >= start:
                         file.write(line)
-
+    """
 
 def get_atomic_masses():
     with open('Periodic_Table_Of_Elements.csv') as csvfile:
@@ -222,7 +224,7 @@ def check_arguments():
                 print('--onlyatomtypes argument: wrong input. Check it and try again.\nEnd of program.')
                 sys.exit()
         else:
-            requested_elements = set(element.strip() for element in args.onlyatomtypes.split(','))
+            requested_elements = set([element.strip() for element in args.onlyatomtypes.split(',')])
 
     return minimum, maximum, requested_elements
 
@@ -230,25 +232,17 @@ if __name__ == '__main__':
     relative_atomic_masses = dict()
     get_atomic_masses()
 
-    minimum, maximum, requested_elements = check_arguments()
+    arguments = check_arguments()
 
-    sdf_set, molecule_pointers = MoleculeSet.load_from_file(args.filename)
+    sdf_set = MoleculeSet.load_from_file(args.filename)
     sdf_set.get_statistics()
     sdf_set.print_statistics()
-    print(molecule_pointers)
 
-    set2 = sdf_set.filter_molecules_by_weight(minimum, maximum)
-    set2.print_statistics()
+    set2 = sdf_set.filter_molecules_by_properties(arguments)
+    set2.get_statistics()
+    set2.print_statistics(print_detailed=True)
+    # program called with --onlyatomtypes argument only
+    set2.create_new_SDFfile(args.filename[:-4]+'_filter_by_props')
 
-    set3 = sdf_set.filter_molecules_by_atom_types(requested_elements)
-    set3.print_statistics(print_detailed=True)
-    set3.create_SDFfile('atom_types_'+''.join(sorted(list(requested_elements)))+'_'+args.filename[:-4])
-
-    # set4 = sdf_set.filter_molecules_by_weight().filter_molecules_by_atom_types()
-    # set4.print_statistics(print_detailed=True)
-
-
-"""
-DUTY TO DO
-filtr molekul - vola jednotlive podfukce, ktere kontroluji jednotlive vlastosti def check_weight(), vraci bool
-"""
+    # set3.create_new_SDFfile('atom_types_'+''.join(sorted(list(requested_elements)))+'_'+args.filename[:-4])
+    # set4.create_new_SDFfile(args.filename[:-4]+'_filter_by_props_'+''.join([i for i in args.weight if i != ':']))
