@@ -14,6 +14,9 @@ parser.add_argument('filename')
 parser.add_argument('--weight', type=str,
                     help='Returns molecule set of molecules with molecular mass given in the argument.\nUSAGE: type e.g."60:70"')
 parser.add_argument('--onlyatomtypes', type=str, help='Returns molecule set containing molecules of given elements or their subset.')
+parser.add_argument('--externalcsv', help='Allows user to filter molecules in sdf file in dependence on their characteristics given in external csv./'
+                                          'Adding optional argument --csvfilter required.')
+parser.add_argument('--csvfilter', nargs='+')
 args = parser.parse_args()
 
 Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
@@ -29,25 +32,26 @@ class Atom:
 
 
 class Molecule:
-    def __init__(self, name, atoms, bonds):
+    def __init__(self, name, atoms, bonds, moleculestring):
         self.name = name
         self.atoms = atoms
         self.bonds = bonds
+        self.moleculestring = moleculestring
 
     def __str__(self):
         return f'Molecule {self.name}: atoms:{self.atoms}, \nbonds:{self.bonds}'
 
     def maxdistance(self):
-        maxdistance = 0
+        maxdist = 0
 
         for m, atom_a in enumerate(self.atoms):
             for n, atom_b in enumerate(self.atoms[1:], start=m+1):
                 distance = math.sqrt(sum((atom_a.coords[k] - atom_b.coords[k])**2 for k in range(3)))
 
-                if distance > maxdistance:
-                    maxdistance = distance
+                if distance > maxdist:
+                    maxdist = distance
 
-        return maxdistance
+        return maxdist
 
     @property
     def molecular_mass(self):
@@ -72,6 +76,9 @@ class Molecule:
 
         return molecule_statistics
 
+    def check_external_attributes(self, attributes):
+        return True
+
     def check_weight(self, minweight, maxweight):
         if self.molecular_mass >= float(minweight) and self.molecular_mass <= float(maxweight):
             return True
@@ -93,24 +100,24 @@ class MoleculeSet:
     @classmethod
     def load_from_file(cls, filename):
         molecules = []
-        molecule_ranges = {}
-        start = 0
-        stop = 0
 
         with open(filename) as file:
             while True:
                 try:
+                    moleculestring = ""
                     name = file.readline()[:10].strip()
+                    moleculestring += (name + '\n')
 
                     for i in range(2):
                         line = file.readline()
+                        moleculestring += line
                     info = file.readline()
-                    stop += 4
+                    moleculestring += info
 
                     atoms = list()  # list of Atom objects included in a molecule
                     for i in range(int(info[0:3])):
                         line = file.readline()
-                        stop += 1
+                        moleculestring += line
                         element = line[31:34].strip()
                         coordinates = tuple(float(line[l: r]) for l, r in [(3, 10), (13, 20), (23, 30)])
                         atom = Atom(coordinates, element)
@@ -119,26 +126,23 @@ class MoleculeSet:
                     bonds = list()  # stores information about atoms in a molecule and their valence
                     for i in range(int(info[3:6])):
                         line = file.readline()
-                        stop += 1
+                        moleculestring += line
                         first_at, second_at, bond = (int(line[l: r]) for l, r in [(0, 3), (3, 6), (6, 9)])
                         bonds.append(Bonds(first_at, second_at, bond))
-                    molecule = Molecule(name, atoms, bonds)
-                    molecules.append(molecule)
 
                 except ValueError:
                     break
 
                 while True:
                     line = file.readline()
-                    stop += 1
+                    moleculestring += line
                     if 'END' in line:
-                        molecule_ranges[name] = start, stop
+                        molecule = Molecule(name, atoms, bonds, moleculestring)
+                        molecules.append(molecule)
                     if '$$$$' in line:
-                        start = stop+1
                         break
 
-
-        return MoleculeSet(molecules), molecule_ranges
+        return MoleculeSet(molecules)
 
     def get_statistics(self):
         final_statistics = Counter()
@@ -162,11 +166,73 @@ class MoleculeSet:
 
         return MoleculeSet(self.molecules)
 
+    def add_external_attributes(self):
+        names = [molecule.name for molecule in self.molecules]
+
+        with open(args.externalcsv) as csvfile:
+            line = csvfile.readline()
+            properties = [m_property.strip() for m_property in line.split(';')][1:]
+            # CSV CHECKUPS
+            if len(self.molecules) != len(csvfile.readlines()):
+                print(
+                    f"External CSV Error: File {args.filename} and {args.externalcsv} do not contain same number of molecules."
+                    f"\nEnd of program.")
+                sys.exit()
+
+            csvfile.seek(0)
+            reader = csv.DictReader(csvfile, delimiter=';')
+            for row in reader:
+                if row['name'] not in names:
+                    print(f"External CSV Error: File {args.filename} doesn't contain molecule {row['name']}."
+                          f" Check it and try again.\nEnd of program.")
+                    sys.exit()
+                else:
+                    # ADDING NEW MOLECULE ATTRIBUTE
+                    # ? another possibility to match molecule with appropriate row in csv? (avoid 3 for cycles)
+                    for molecule in self.molecules:
+                        if molecule.name == row['name']:
+                            external_properties = {}
+                            for m_property in properties:
+                                try:
+                                    external_properties[m_property] = float(row[m_property])
+                                except ValueError:
+                                    external_properties[m_property] = row[m_property]
+                            molecule.external_properties = external_properties
+
     def filter_molecules_by_properties(self, arguments):
         minimum, maximum, requested_elements = arguments
         molecules = []
+        attributes = {}
+
+        if args.externalcsv:
+            # maybe better to divide add_ext_attributes() into check_csv() and add_external_attributes() method (?)
+            self.add_external_attributes()
+
+            for arg in args.csvfilter:
+                m_property, value = arg.split('=')
+
+                for char in value:
+                    if char.isdigit():    # problem with any()
+                        try:
+                            minimum, maximum = value.split(':')
+                            if minimum == '':
+                                minimum = 0
+                            elif maximum == '':
+                                maximum = float('inf')
+                            else:
+                                minimum = float(minimum)
+                                maximum = float(maximum)
+                        except ValueError:
+                            print("--csvfilter argument Error: wrong input. Check it and try again.\nEnd of program.")
+                            sys.exit()
+
+                        value = minimum, maximum
+                        break
+                attributes[m_property] = value
 
         for molecule in self.molecules:
+            if args.externalcsv and not molecule.check_external_attributes(attributes):
+                continue
             if args.weight and not molecule.check_weight(minimum, maximum):
                 continue
             if args.onlyatomtypes and not molecule.check_elements(requested_elements):
@@ -176,38 +242,10 @@ class MoleculeSet:
         return MoleculeSet(molecules)
 
     def create_new_SDFfile(self, filename):
-        ranges = [molecule_ranges[molecule.name] for molecule in self.molecules]
-        with open(filename + '.sdf', 'w') as file, open(args.filename, 'r') as reader:
-            for n, line in enumerate(reader.readlines(), start=1):
-                try:
-                    if n >= ranges[0][0] and n <= ranges[0][1]:
-                        file.write(line)
-                    else:
-                        if n == ranges[0][1] + 1:
-                            file.write('$$$$\n')
-                            ranges.pop(0)
-                        continue
-                except IndexError:
-                    break
-
-    # another possibility: saving line ranges as a Molecule attribute -> get rid off glob var
-
-    # INDICES
-    # def create_new_SDFfile(self, filename):
-    #     ranges = [molecule_ranges[molecule.name] for molecule in self.molecules]
-    #     index = 0
-    #     with open(filename + '.sdf', 'w') as file, open(args.filename, 'r') as reader:
-    #         for n, line in enumerate(reader.readlines(), start=1):
-    #             try:
-    #                 if n >= ranges[index][0] and n <= ranges[index][1]:
-    #                     file.write(line)
-    #                 else:
-    #                     if n == ranges[index][1] + 1:
-    #                         file.write('$$$$\n')
-    #                         index += 1
-    #                     continue
-    #             except IndexError:
-    #                 break
+        with open(filename + '.sdf', 'w') as file:
+            for Molecule in self.molecules:
+                file.write(Molecule.moleculestring)
+                file.write('$$$$\n')
 
 
 def get_atomic_masses():
@@ -247,7 +285,11 @@ def check_arguments():
                 print('--onlyatomtypes argument: wrong input. Check it and try again.\nEnd of program.')
                 sys.exit()
         else:
-            requested_elements = set(element.strip() for element in args.onlyatomtypes.split(','))
+            requested_elements = set([element.strip() for element in args.onlyatomtypes.split(',')])
+
+    if args.externalcsv and not args.csvfilter:
+        print("External CSV Error: Missing '--csvfilter' argument. Check it and try again.\nEnd of program.")
+        sys.exit()
 
     return minimum, maximum, requested_elements
 
@@ -257,8 +299,7 @@ if __name__ == '__main__':
 
     arguments = check_arguments()
 
-    sdf_set, molecule_ranges = MoleculeSet.load_from_file(args.filename)
-    print(molecule_ranges)
+    sdf_set = MoleculeSet.load_from_file(args.filename)
     sdf_set.get_statistics()
     sdf_set.print_statistics()
 
@@ -266,6 +307,5 @@ if __name__ == '__main__':
     set2.get_statistics()
     set2.print_statistics(print_detailed=True)
     # program called with --onlyatomtypes argument only
-
-    set2.create_new_SDFfile(args.filename[:-4]+'_filter_by_props_sdf')
+    #set2.create_new_SDFfile(args.filename[:-4]+'_filter_by_props')
 
