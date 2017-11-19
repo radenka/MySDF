@@ -76,8 +76,22 @@ class Molecule:
 
         return molecule_statistics
 
-    def check_external_attributes(self, attributes):
-        return True
+    def check_external_properties(self, csv_arguments):
+        checkups = []
+        for attribute, value in csv_arguments.items():
+            # tuple indicates numeric range
+            if type(value) == tuple:
+                if self.external_properties[attribute] >= float(value[0]) and self.external_properties[attribute] <= float(value[1]):
+                    checkups.append(True)
+                else:
+                    checkups.append(False)
+            else:
+                if self.external_properties[attribute] == value:
+                    checkups.append(True)
+                else:
+                    checkups.append(False)
+
+        return all(checkups)
 
     def check_weight(self, minweight, maxweight):
         if self.molecular_mass >= float(minweight) and self.molecular_mass <= float(maxweight):
@@ -166,7 +180,7 @@ class MoleculeSet:
 
         return MoleculeSet(self.molecules)
 
-    def add_external_attributes(self):
+    def add_external_properties(self):
         names = [molecule.name for molecule in self.molecules]
 
         with open(args.externalcsv) as csvfile:
@@ -200,38 +214,15 @@ class MoleculeSet:
                             molecule.external_properties = external_properties
 
     def filter_molecules_by_properties(self, arguments):
-        minimum, maximum, requested_elements = arguments
+        minimum, maximum, requested_elements, csv_arguments = arguments
         molecules = []
-        attributes = {}
 
         if args.externalcsv:
             # maybe better to divide add_ext_attributes() into check_csv() and add_external_attributes() method (?)
-            self.add_external_attributes()
-
-            for arg in args.csvfilter:
-                m_property, value = arg.split('=')
-
-                for char in value:
-                    if char.isdigit():    # problem with any()
-                        try:
-                            minimum, maximum = value.split(':')
-                            if minimum == '':
-                                minimum = 0
-                            elif maximum == '':
-                                maximum = float('inf')
-                            else:
-                                minimum = float(minimum)
-                                maximum = float(maximum)
-                        except ValueError:
-                            print("--csvfilter argument Error: wrong input. Check it and try again.\nEnd of program.")
-                            sys.exit()
-
-                        value = minimum, maximum
-                        break
-                attributes[m_property] = value
+            self.add_external_properties()
 
         for molecule in self.molecules:
-            if args.externalcsv and not molecule.check_external_attributes(attributes):
+            if args.externalcsv and not molecule.check_external_properties(csv_arguments):
                 continue
             if args.weight and not molecule.check_weight(minimum, maximum):
                 continue
@@ -259,6 +250,7 @@ def check_arguments():
     minimum = None
     maximum = None
     requested_elements = None
+    csv_arguments = {}
 
     if args.weight:
         if ':' in args.weight:
@@ -291,13 +283,40 @@ def check_arguments():
         print("External CSV Error: Missing '--csvfilter' argument. Check it and try again.\nEnd of program.")
         sys.exit()
 
-    return minimum, maximum, requested_elements
+    if args.csvfilter and not args.externalcsv:
+        print("External CSV Error: Missing '--externalcsv' argument. Check it and try again.\nEnd of program.")
+        sys.exit()
+
+    if args.csvfilter:
+        for arg in args.csvfilter:
+            attribute, value = arg.split('=')
+            # turning numeric range into tuple
+            for char in value:
+                if char.isdigit():  # problem with any()
+                    try:
+                        minimum, maximum = value.split(':')
+                        if minimum == '':
+                            minimum = 0
+                        elif maximum == '':
+                            maximum = float('inf')
+                        else:
+                            minimum = float(minimum)
+                            maximum = float(maximum)
+                    except ValueError:
+                        print("--csvfilter argument Error: wrong input. Check it and try again.\nEnd of program.")
+                        sys.exit()
+                    value = minimum, maximum
+                    break
+
+            csv_arguments[attribute] = value
+
+    return minimum, maximum, requested_elements, csv_arguments
 
 if __name__ == '__main__':
     relative_atomic_masses = dict()
     get_atomic_masses()
 
-    arguments = check_arguments()
+    arguments = check_arguments()   ### one var ore more? -> 216
 
     sdf_set = MoleculeSet.load_from_file(args.filename)
     sdf_set.get_statistics()
@@ -306,6 +325,5 @@ if __name__ == '__main__':
     set2 = sdf_set.filter_molecules_by_properties(arguments)
     set2.get_statistics()
     set2.print_statistics(print_detailed=True)
-    # program called with --onlyatomtypes argument only
-    #set2.create_new_SDFfile(args.filename[:-4]+'_filter_by_props')
+    set2.create_new_SDFfile(args.filename[:-4]+'_filter_by_props_external_csv')
 
