@@ -4,22 +4,36 @@ import math
 import pprint
 from collections import Counter
 from collections import namedtuple
+from collections import defaultdict
 from typing import List
 import sys
+import statistics
 
 parser = argparse.ArgumentParser(prog='SDF4ever',
-                                 description='SDF format processing.\n',
+                                 description='SDF format processing.\n'
+                                             'EXIT STATUS:'
+                                             '\n\t1: Inconsistency of external CSV and SDF file.'
+                                             ' Files do not contain identical molecules.'
+                                             '\n\t2: Weight argument error: wrong input. '
+                                             'Check presence of ":" and numeric range correctness.'
+                                             '\n\t3: Only-atom-types argument error: wrong input. '
+                                             'Check symbols of given elements and their delimiter.'
+                                             '\n\t4: One of the "--csvfilter" or "--externalcsv" arguments is missing.'
+                                             'Program requires to use both of them at once.'
+                                             '\n\t5: CSVfilter argument error: wrong input. '
+                                             'Check numeric range correctness and presence of delimiters.',
                                  epilog='End of help block. Now try it yourself. Good luck!')
 parser.add_argument('filename')
 parser.add_argument('--weight', type=str,
-                    help='Returns molecule set of molecules with molecular mass given in the argument.\nUSAGE: type e.g."60:70"')
+                    help='Returns molecule set of molecules with molecular mass given in the argument.\nUSAGE: type e.g.--weight "60:70"')
 parser.add_argument('--onlyatomtypes', type=str, help='Returns molecule set containing molecules of given elements or their subset.')
-parser.add_argument('--externalcsv', help='Allows user to filter molecules in sdf file in dependence on their characteristics given in external csv./'
+parser.add_argument('--externalcsv', help='Allows user to filter molecules in sdf file in dependence on their characteristics given in external csv.'
                                           'Adding optional argument --csvfilter required.')
 parser.add_argument('--csvfilter', nargs='+')
 args = parser.parse_args()
 
 Bonds = namedtuple('Bonds', ['first_atom', 'second_atom', 'bond'])
+Arguments = namedtuple('Arguments', ['minweight', 'maxweight', 'requested_elements', 'csv_arguments', 'csv_contradict_args'])
 
 
 class Atom:
@@ -38,30 +52,35 @@ class Molecule:
         self.bonds = bonds
         self.moleculestring = moleculestring
 
+    def __getitem__(self, i):
+        return self.atoms[i]
+
+    def __len__(self):
+        return len(self.atoms)
+
     def __str__(self):
         return f'Molecule {self.name}: atoms:{self.atoms}, \nbonds:{self.bonds}'
 
     def maxdistance(self):
         maxdist = 0
 
-        for m, atom_a in enumerate(self.atoms):
-            for n, atom_b in enumerate(self.atoms[1:], start=m+1):
+        for m, atom_a in enumerate(self): # add .atoms everywhere next to 'self'
+            for n, atom_b in enumerate(self[1:], start=m+1):
                 distance = math.sqrt(sum((atom_a.coords[k] - atom_b.coords[k])**2 for k in range(3)))
 
-                if distance > maxdist:
-                    maxdist = distance
+                maxdist = max(distance, maxdist)
 
         return maxdist
 
     @property
     def molecular_mass(self):
-        molecular_mass = sum(relative_atomic_masses[atom.element] for atom in self.atoms)
+        molecular_mass = sum(relative_atomic_masses[atom.element] for atom in self)
         # final_molecular_mass = molecular_mass * 1.66053904e-27
 
         return molecular_mass
 
     def maximum_bonds_statistics(self):
-        maxbonds = [0] * len(self.atoms)
+        maxbonds = [0] * len(self)
 
         for i in self.bonds:
             if i.bond > maxbonds[i.first_atom-1]:
@@ -71,45 +90,52 @@ class Molecule:
 
         # molecule_maxbonds == list of tuples created for each molecule [('N', 1), ('0', 2)]
         # contains information about elements and their maximum bonds
-        molecule_maxbonds = list(zip([atom.element for atom in self.atoms], maxbonds))
+        molecule_maxbonds = list(zip([atom.element for atom in self], maxbonds))
         molecule_statistics = Counter(i for i in molecule_maxbonds)
 
         return molecule_statistics
 
-    def check_external_properties(self, csv_arguments):
+    def check_external_properties(self, csv_arguments, csv_contradict_args):
         checkups = []
-        for attribute, value in csv_arguments.items():
+
+        if len(csv_contradict_args) > 0:
+            contradicts_checkups = []
+            for m_property in csv_contradict_args:
+                contradicts_checkups.append(m_property not in self.external_properties.values())
+            checkups.append(all(contradicts_checkups))
+
+        for attr, value in csv_arguments.items():
             # tuple indicates numeric range
             if type(value) == tuple:
-                if self.external_properties[attribute] >= float(value[0]) and self.external_properties[attribute] <= float(value[1]):
-                    checkups.append(True)
-                else:
-                    checkups.append(False)
+                checkups.append(
+                    self.external_properties[attr] >= float(value[0]) and self.external_properties[attr] <= float(value[1])
+                )
             else:
-                if self.external_properties[attribute] == value:
-                    checkups.append(True)
-                else:
-                    checkups.append(False)
+                if len(csv_contradict_args) > 0:
+                    print("CSV argument error: Can't use --csvfilter '^property' and 'type=property' at once."
+                          "\nEnd of program.")
+                    sys.exit(5)
+                checkups.append(self.external_properties[attr] == value)
 
         return all(checkups)
 
     def check_weight(self, minweight, maxweight):
-        if self.molecular_mass >= float(minweight) and self.molecular_mass <= float(maxweight):
-            return True
-        else:
-            return False
+        return self.molecular_mass >= float(minweight) and self.molecular_mass <= float(maxweight)
 
     def check_elements(self, requested_elements):
-        molecule_elements = set(Atom.element for Atom in self.atoms)
-        if molecule_elements <= requested_elements:
-            return True
-        else:
-            return False
+        molecule_elements = set(Atom.element for Atom in self)
+        return molecule_elements <= requested_elements
 
 
 class MoleculeSet:
     def __init__(self, molecules: List[Molecule]):
         self.molecules = molecules
+
+    def __getitem__(self, i):
+        return self.molecules[i]
+
+    def __len__(self):
+        return len(self.molecules)
 
     @classmethod
     def load_from_file(cls, filename):
@@ -159,74 +185,105 @@ class MoleculeSet:
         return MoleculeSet(molecules)
 
     def get_statistics(self):
-        final_statistics = Counter()
-        for n, molecule in enumerate(self.molecules, start=1):
-            final_statistics += molecule.maximum_bonds_statistics()
+        numeric_properties = defaultdict(list)
+        categorical_properties = defaultdict(list)
+        atom_types_statistics = Counter()
 
-        return final_statistics
+        for molecule in self:
+            atom_types_statistics += molecule.maximum_bonds_statistics()
+            numeric_properties['molecular_mass'].append(molecule.molecular_mass)
+            numeric_properties['maximum_distance'].append(molecule.maxdistance())  # maximum_distance or molecule_size?
+
+            if args.externalcsv:
+                for m_property, value in molecule.external_properties.items():
+                    if type(value) == float:
+                        numeric_properties[m_property].append(value)
+                    else:
+                        categorical_properties[m_property].append(value)
+
+        np_to_print = defaultdict(list)   # np == numeric properties
+        cp_to_print = {}   # cp == categorical properties
+        for key, values in numeric_properties.items():
+            np_to_print[key].append(statistics.mean(values))
+            try:
+                np_to_print[key].append(statistics.stdev(values))
+            except statistics.StatisticsError:
+                np_to_print[key].append(0)
+
+        for key, values in categorical_properties.items():
+            cp_to_print[key] = Counter(values)
+
+        return atom_types_statistics, np_to_print, cp_to_print
 
     def print_statistics(self, print_detailed=False):
+        print('MoleculeSet:')
         if print_detailed:
-            for n, molecule in enumerate(self.molecules, start=1):
+            for n, molecule in enumerate(self, start=1):
                 print(str("%3d" % n) + ':', molecule.name, end=" ")
                 print(f'Relative molecular mass = {molecule.molecular_mass:.3f}', end=' ')
-                print(set([Atom.element for Atom in molecule.atoms]))
+                print(set([Atom.element for Atom in molecule]))
             print()
 
-        print("### FINAL STATISTICS OF ATOM TYPES: ###")
-        print_final = pprint.PrettyPrinter(indent=2)
-        print_final.pprint(self.get_statistics())
-        print()
+        atom_types_statistics, numeric_properties, categorical_properties = self.get_statistics()
+        print('### NUMERIC AND CATEGORICAL PROPERTIES')
+        print('{:>35} {:>10}'.format('MEAN', 'SD'))
 
-        return MoleculeSet(self.molecules)
+        for key, values in numeric_properties.items():
+            print('{:25s}{:10.3f} {:10.3f}'.format(key.capitalize(), values[0], values[1]))
+
+        if len(categorical_properties) > 0:
+            print('{:>46}'.format('ABSOLUTE (RELATIVE) FREQUENCY'))
+            for m_property, counter in categorical_properties.items():
+                amount = sum(count for count in counter.values())
+                print(m_property.capitalize())
+                for item, frequency in counter.items():
+                    print('\t{:17s}{:>3d}{:10.3f}'.format(item, frequency, frequency/amount))
+
+        print("\n### ATOM TYPES:")
+        print_final = pprint.PrettyPrinter(indent=2)
+        print_final.pprint(atom_types_statistics)
+        print(2*'\n')
+
 
     def add_external_properties(self):
-        names = [molecule.name for molecule in self.molecules]
+        molecule_storage = {molecule.name: molecule for molecule in self}
 
         with open(args.externalcsv) as csvfile:
             line = csvfile.readline()
             properties = [m_property.strip() for m_property in line.split(';')][1:]
             # CSV CHECKUPS
-            if len(self.molecules) != len(csvfile.readlines()):
+            if len(self) != len(csvfile.readlines()):
                 print(
                     f"External CSV Error: File {args.filename} and {args.externalcsv} do not contain same number of molecules."
                     f"\nEnd of program.")
-                sys.exit()
+                sys.exit(1)
 
             csvfile.seek(0)
             reader = csv.DictReader(csvfile, delimiter=';')
             for row in reader:
-                if row['name'] not in names:
+                if row['name'] not in molecule_storage.keys():
                     print(f"External CSV Error: File {args.filename} doesn't contain molecule {row['name']}."
-                          f" Check it and try again.\nEnd of program.")
-                    sys.exit()
+                          f"Check it and try again.\nEnd of program.")
+                    sys.exit(1)
                 else:
                     # ADDING NEW MOLECULE ATTRIBUTE
-                    # ? another possibility to match molecule with appropriate row in csv? (avoid 3 for cycles)
-                    for molecule in self.molecules:
-                        if molecule.name == row['name']:
-                            external_properties = {}
-                            for m_property in properties:
-                                try:
-                                    external_properties[m_property] = float(row[m_property])
-                                except ValueError:
-                                    external_properties[m_property] = row[m_property]
-                            molecule.external_properties = external_properties
+                    external_properties = {}
+                    for m_property in properties:
+                        try:
+                            external_properties[m_property] = float(row[m_property])
+                        except ValueError:
+                            external_properties[m_property] = row[m_property]
+                    molecule_storage[row['name']].external_properties = external_properties
 
     def filter_molecules_by_properties(self, arguments):
-        minimum, maximum, requested_elements, csv_arguments = arguments
         molecules = []
 
-        if args.externalcsv:
-            # maybe better to divide add_ext_attributes() into check_csv() and add_external_attributes() method (?)
-            self.add_external_properties()
-
-        for molecule in self.molecules:
-            if args.externalcsv and not molecule.check_external_properties(csv_arguments):
+        for molecule in self:
+            if args.externalcsv and not molecule.check_external_properties(arguments.csv_arguments, arguments.csv_contradict_args):
                 continue
-            if args.weight and not molecule.check_weight(minimum, maximum):
+            if args.weight and not molecule.check_weight(arguments.minweight, arguments.maxweight):
                 continue
-            if args.onlyatomtypes and not molecule.check_elements(requested_elements):
+            if args.onlyatomtypes and not molecule.check_elements(arguments.requested_elements):
                 continue
             molecules.append(molecule)
 
@@ -234,8 +291,8 @@ class MoleculeSet:
 
     def create_new_SDFfile(self, filename):
         with open(filename + '.sdf', 'w') as file:
-            for Molecule in self.molecules:
-                file.write(Molecule.moleculestring)
+            for molecule in self:
+                file.write(molecule.moleculestring)
                 file.write('$$$$\n')
 
 
@@ -251,6 +308,7 @@ def check_arguments():
     maximum = None
     requested_elements = None
     csv_arguments = {}
+    csv_contradict_args = None
 
     if args.weight:
         if ':' in args.weight:
@@ -266,64 +324,83 @@ def check_arguments():
 
             except ValueError:
                 print("--weight argument: wrong input. Check it and try again.\nEnd of program.")
-                sys.exit()
+                sys.exit(2)
         else:
             print('Usage of ":" required. Check it and try again.\nEnd of program.')
-            sys.exit()
+            sys.exit(2)
 
     if args.onlyatomtypes:
         for i in [element.strip() for element in args.onlyatomtypes.split(',')]:
             if i not in relative_atomic_masses.keys():
                 print('--onlyatomtypes argument: wrong input. Check it and try again.\nEnd of program.')
-                sys.exit()
+                sys.exit(3)
         else:
             requested_elements = set([element.strip() for element in args.onlyatomtypes.split(',')])
 
-    if args.externalcsv and not args.csvfilter:
-        print("External CSV Error: Missing '--csvfilter' argument. Check it and try again.\nEnd of program.")
-        sys.exit()
-
-    if args.csvfilter and not args.externalcsv:
-        print("External CSV Error: Missing '--externalcsv' argument. Check it and try again.\nEnd of program.")
-        sys.exit()
+    if (args.externalcsv and not args.csvfilter) or (args.csvfilter and not args.externalcsv):
+        print("External CSV Error: Missing '--csvfilter' or '--externalcsv' argument. Check them and try again."
+              "\nEnd of program.")
+        sys.exit(4)
 
     if args.csvfilter:
         for arg in args.csvfilter:
-            attribute, value = arg.split('=')
-            # turning numeric range into tuple
-            for char in value:
-                if char.isdigit():  # problem with any()
+            if '=' in arg:
+                argument, value = arg.split('=')
+
+                try:
+                    mini, maxi = value.split(':')
+                    if mini == '':
+                        mini = 0
+                    elif maxi == '':
+                        maxi = float('inf')
+                    else: pass  ###
+
                     try:
-                        minimum, maximum = value.split(':')
-                        if minimum == '':
-                            minimum = 0
-                        elif maximum == '':
-                            maximum = float('inf')
-                        else:
-                            minimum = float(minimum)
-                            maximum = float(maximum)
+                        mini = float(mini)
+                        maxi = float(maxi)
                     except ValueError:
-                        print("--csvfilter argument Error: wrong input. Check it and try again.\nEnd of program.")
-                        sys.exit()
-                    value = minimum, maximum
-                    break
+                        # exception for typing error in numeric range input (e.g. 50:f70) (string in digits)
+                        print(
+                            "--csvfilter argument Error: wrong input. Problem with numeric range. Check it and try again.\nEnd of program."
+                        )
+                        sys.exit(5)
+                    value = mini, maxi
 
-            csv_arguments[attribute] = value
+                except ValueError:
+                    # value.split(':') returns number different to 2
+                    if len(value.split(':')) == 1:
+                        pass
+                    else:
+                        # numeric range contains 2 colons or more
+                        print("--csvfilter argument Error: wrong input. Problem with numeric range. Check it and try again.\nEnd of program.")
+                        sys.exit(5)
 
-    return minimum, maximum, requested_elements, csv_arguments
+                csv_arguments[argument] = value
+
+            elif arg[0] == '^':
+                csv_contradict_args = [item.strip() for item in arg[1:].split(',')]
+
+            else:
+                print("--csvfilter argument Error: wrong arguments. Check them and try again.\nEnd of program.")
+                sys.exit(5)
+
+    return Arguments(minimum, maximum, requested_elements, csv_arguments, csv_contradict_args)
 
 if __name__ == '__main__':
     relative_atomic_masses = dict()
     get_atomic_masses()
 
-    arguments = check_arguments()   ### one var ore more? -> 216
+    arguments = check_arguments()
 
     sdf_set = MoleculeSet.load_from_file(args.filename)
-    sdf_set.get_statistics()
-    sdf_set.print_statistics()
+    if args.externalcsv:
+        sdf_set.add_external_properties()
+    sdf_set.print_statistics()   # calling MoleculeSet.get_statistics() inside the print_stat() function
 
     set2 = sdf_set.filter_molecules_by_properties(arguments)
-    set2.get_statistics()
-    set2.print_statistics(print_detailed=True)
-    set2.create_new_SDFfile(args.filename[:-4]+'_filter_by_props_external_csv')
+    set2.print_statistics(print_detailed=False)
+    #set2.create_new_SDFfile(args.filename[:-4]+'_filter_by_props_external_csv')
 
+# rozdelit atom, Molecule, MoleculeSet do  souboru -> nacitat jako moduly
+# python data model
+# from collectons import choice
